@@ -1,0 +1,6 @@
+xlsxwriter
+fastexcel
+polars
+-e /home/matthew/Documents/Projects/software/opensky-api/python
+tqdm
+jupyterlab
