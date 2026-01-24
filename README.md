@@ -7,14 +7,21 @@ and the corresponding emissions.
 
 ## Animation
 
-Left pane (2/3 of width):
-A map of eastern Australia, with Melbourne and Sydney marked.
-Little pictures of planes are shown zooming across the map, corresponding to real flights.
-The flight number is annotated as a textbox next to it.
+**Left pane (half of width):**
+- OpenStreetMap basemap showing the Melbourne-Sydney corridor with geographic features
+- Melbourne and Sydney airports marked with colored dots
+- Plane icons positioned at their actual lat/lon coordinates
+- Planes are rotated to match their heading angle
 
-Right pane:
-An analog clock showing the time (with AM/PM embedded in its centre)
-A counter showing number of planes so far, and cumulative emissions.
+**Right pane (half of width):**
+- Current time displayed in HH:MM:SS format
+- Cumulative emissions counters (odometer style with zero padding):
+  - CO₂ (carbon dioxide) - primary greenhouse gas
+  - NOₓ (nitrogen oxides) - air pollutant
+  - SOₓ (sulfur oxides) - air pollutant
+  - CO (carbon monoxide) - toxic gas
+  - HC (hydrocarbons) - unburned fuel
+  - PM (particulate matter total) - respiratory hazard
 
 ## Input Data
 
@@ -44,15 +51,15 @@ The way emissions data works is that there is one number for take off, taxiing, 
   * cumulative emissions at each moment in time (not per flight, all flights together)
   * columns:
     * `TIME`: datetime (Sydney time zone)
-    * `CO2` - CO2 kg
-    * `NOX` - nitrous oxides
-    * `SOX` - sulfur oxides
-    * `H2O`
-    * `CO` - carbon monoxide
-    * `HC`
-    * `PM_NON_VOLATILE` - particular matter
-    * `PM_VOLATILE` - particular matter
-    * `PM_TOTAL`- particular matter
+    * `CO2` - Carbon dioxide (kg) - primary greenhouse gas
+    * `NOX` - Nitrogen oxides (kg) - air pollutant, contributes to smog and acid rain
+    * `SOX` - Sulfur oxides (kg) - air pollutant, contributes to acid rain
+    * `H2O` - Water vapor (kg)
+    * `CO` - Carbon monoxide (kg) - toxic gas, air pollutant
+    * `HC` - Hydrocarbons (kg) - unburned fuel, air pollutant
+    * `PM_NON_VOLATILE` - Particulate matter non-volatile (kg)
+    * `PM_VOLATILE` - Particulate matter volatile (kg)
+    * `PM_TOTAL` - Particulate matter total (kg) - air pollutant, respiratory hazard
 datetime[μs, Australia/Sydney]	f64	f64	f64	f64	f64	f64	f64	f64	f64
 * `planes.parquet`
   * description: one row per (flight, time). The emissions values are cumulative, within each flight. So for total emissions, group by time, sum across flights.
@@ -65,4 +72,24 @@ datetime[μs, Australia/Sydney]	f64	f64	f64	f64	f64	f64	f64	f64	f64
 
 ## Graph Implementation
 
-Which library(s)?
+The animation is created using:
+
+- **matplotlib**: Main plotting library for creating the figure with map and statistics panels
+- **contextily**: Adds OpenStreetMap basemap tiles to show geographic features (terrain, cities, coastline)
+- **pyproj**: Coordinate transformation from lat/lon (EPSG:4326) to Web Mercator (EPSG:3857) for map projection
+- **Pillow (PIL)**: Loads and rotates plane images while preserving transparency
+- **ffmpeg**: Stitches PNG frames into MP4 video
+
+### Approach
+
+1. Generate one PNG frame per timestamp using matplotlib
+2. Left panel: matplotlib plot with contextily basemap showing the Sydney-Melbourne corridor
+3. Right panel: matplotlib text annotations showing time and emissions counters
+4. Plane images are rotated based on heading and overlaid on the map
+5. All frames are combined into video using ffmpeg command-line tool
+
+This approach was chosen because:
+- matplotlib handles both map plotting and text rendering
+- contextily provides easy integration with tile-based maps (like Google Maps style)
+- No heavy GIS libraries needed for this simple corridor visualization
+- ffmpeg is industry-standard and already installed on the system

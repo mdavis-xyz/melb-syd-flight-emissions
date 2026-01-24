@@ -4,3 +4,7 @@ polars
 -e /home/matthew/Documents/Projects/software/opensky-api/python
 tqdm
 jupyterlab
+matplotlib
+Pillow
+contextily
+pyproj
