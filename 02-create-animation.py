@@ -50,7 +50,7 @@ SYDNEY_X, SYDNEY_Y = transformer.transform(SYDNEY['lon'], SYDNEY['lat'])
 MELBOURNE_X, MELBOURNE_Y = transformer.transform(MELBOURNE['lon'], MELBOURNE['lat'])
 
 
-def load_data(take_every=2):
+def load_data(take_every=6):
     """Load planes and emissions data."""
     print("Loading data...")
 
@@ -177,11 +177,49 @@ def create_frame(time_val, planes_at_time, emissions_at_time, plane_img, frame_p
         num_flights = co2 = nox = sox = co = hc = pm_total = 0.0
 
     # Format time
-    time_str = time_val.strftime('%H:%M:%S')
+    time_str = time_val.strftime('%H:%M')
 
-    # Display text
+    # Draw analog clock
+    clock_center_x = 0.25
+    clock_center_y = 0.82
+    clock_radius = 0.08
+
+    # Clock face (circle)
+    clock_face = plt.Circle((clock_center_x, clock_center_y), clock_radius,
+                             transform=ax_stats.transAxes, facecolor='white',
+                             edgecolor='black', linewidth=2, zorder=1)
+    ax_stats.add_patch(clock_face)
+
+    # Calculate hand angles (0 degrees = 12 o'clock, clockwise)
+    hours = time_val.hour % 12
+    minutes = time_val.minute
+
+    # Minute hand: 6 degrees per minute, measured from 12 o'clock
+    minute_angle = np.radians(90 - minutes * 6)
+    minute_length = clock_radius * 0.85
+    minute_x = clock_center_x + minute_length * np.cos(minute_angle)
+    minute_y = clock_center_y + minute_length * np.sin(minute_angle)
+
+    # Hour hand: 30 degrees per hour + 0.5 degrees per minute
+    hour_angle = np.radians(90 - (hours * 30 + minutes * 0.5))
+    hour_length = clock_radius * 0.55
+    hour_x = clock_center_x + hour_length * np.cos(hour_angle)
+    hour_y = clock_center_y + hour_length * np.sin(hour_angle)
+
+    # Draw hands
+    ax_stats.plot([clock_center_x, minute_x], [clock_center_y, minute_y],
+                  color='black', linewidth=2, transform=ax_stats.transAxes, zorder=2)
+    ax_stats.plot([clock_center_x, hour_x], [clock_center_y, hour_y],
+                  color='black', linewidth=3, transform=ax_stats.transAxes, zorder=2)
+
+    # Center dot
+    center_dot = plt.Circle((clock_center_x, clock_center_y), 0.008,
+                             transform=ax_stats.transAxes, facecolor='black', zorder=3)
+    ax_stats.add_patch(center_dot)
+
+    # Display time text (moved right)
     y_pos = 0.85
-    ax_stats.text(0.5, y_pos, time_str,
+    ax_stats.text(0.6, y_pos, time_str,
                  ha='center', va='top', fontsize=48, fontweight='bold',
                  family='monospace', transform=ax_stats.transAxes)
 
@@ -289,7 +327,7 @@ def main():
     print(f"\nGenerated {len(times)} frames")
 
     # Create video
-    video_duration = 10  # seconds
+    video_duration = 20  # seconds
     framerate = len(times) // video_duration
     print(f"{framerate=}")
     create_video(FRAME_DIR, OUTPUT_VIDEO, framerate=framerate)
