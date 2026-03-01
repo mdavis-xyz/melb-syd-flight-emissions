@@ -3,6 +3,7 @@
 Create animation of Melbourne-Sydney flights with emissions data.
 """
 
+import json
 import os
 import subprocess
 import tempfile
@@ -51,7 +52,8 @@ SOX_DAMAGE_PER_KG = SOX_DAMAGE_PER_TONNE / KG_PER_TONNE
 
 # https://www.gov.uk/government/publications/assess-the-impact-of-air-quality/air-quality-appraisal-damage-cost-guidance
 # I haven't bothered indexing to inflation for 2026
-NOX_DAMAGE_PER_TONNE_POUNDS = 10193
+# We use aircraft specific damage
+NOX_DAMAGE_PER_TONNE_POUNDS = 17172
 NOX_DAMAGE_PER_TONNE = NOX_DAMAGE_PER_TONNE_POUNDS * AUD_PER_POUND
 NOX_DAMAGE_PER_KG = NOX_DAMAGE_PER_TONNE / KG_PER_TONNE
 
@@ -59,7 +61,7 @@ NOX_DAMAGE_PER_KG = NOX_DAMAGE_PER_TONNE / KG_PER_TONNE
 # https://www.gov.uk/government/publications/assess-the-impact-of-air-quality/air-quality-appraisal-damage-cost-guidance
 # I haven't bothered indexing to inflation for 2026
 # They say PM2.5. My understanding is that planes don't emit larger PM, so that's fine.
-PM_DAMAGE_PER_TONNE_POUNDS = 111411
+PM_DAMAGE_PER_TONNE_POUNDS = 146743
 PM_DAMAGE_PER_TONNE = NOX_DAMAGE_PER_TONNE_POUNDS * AUD_PER_POUND
 PM_DAMAGE_PER_KG = NOX_DAMAGE_PER_TONNE / KG_PER_TONNE
 
@@ -92,40 +94,66 @@ PLANE_ANGLE = -45
 OUTPUT_VIDEO = RESULTS_DIR / "animation.mp4"
 FRAME_DIR = RESULTS_DIR / "frames"
 
-# Airport coordinates (lat/lon)
-SYDNEY = {"lat": -33.946111, "lon": 151.177222}
-MELBOURNE = {"lat": -37.673333, "lon": 144.843333}
-
-# Map bounds (with padding) in lat/lon
-LAT_MIN, LAT_MAX = -38.5, -33.0
-LON_MIN, LON_MAX = 144.0, 152.0
-
 # Coordinate transformer: lat/lon (EPSG:4326) to Web Mercator (EPSG:3857)
 transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+
+# Load airports from JSON
+AIRPORTS_FILE = Path("airports.json")
+with open(AIRPORTS_FILE) as f:
+    AIRPORTS_RAW = json.load(f)
+
+AIRPORTS = {}
+for name, info in AIRPORTS_RAW.items():
+    lat = info["location"]["latitude"]
+    lon = info["location"]["longitude"]
+    x, y = transformer.transform(lon, lat)
+    AIRPORTS[name] = {"lat": lat, "lon": lon, "x": x, "y": y}
+
+# Map bounds from Sydney and Melbourne (with padding) in lat/lon
+BOUND_AIRPORTS = ["Sydney", "Melbourne"]
+bound_lats = [AIRPORTS[a]["lat"] for a in BOUND_AIRPORTS]
+bound_lons = [AIRPORTS[a]["lon"] for a in BOUND_AIRPORTS]
+LAT_PAD, LON_PAD = 0.8, 0.8
+LAT_MIN = min(bound_lats) - LAT_PAD
+LAT_MAX = max(bound_lats) + LAT_PAD
+LON_MIN = min(bound_lons) - LON_PAD
+LON_MAX = max(bound_lons) + LON_PAD
 
 # Convert bounds to Web Mercator
 X_MIN, Y_MIN = transformer.transform(LON_MIN, LAT_MIN)
 X_MAX, Y_MAX = transformer.transform(LON_MAX, LAT_MAX)
-
-# Convert airport coords to Web Mercator
-SYDNEY_X, SYDNEY_Y = transformer.transform(SYDNEY['lon'], SYDNEY['lat'])
-MELBOURNE_X, MELBOURNE_Y = transformer.transform(MELBOURNE['lon'], MELBOURNE['lat'])
 
 
 def load_data(take_every):
     """Load planes and emissions data."""
     print("Loading data...")
 
-    START_HOUR = 6
-    planes_df = pl.read_parquet(PLANES_FILE).filter(pl.col("TIME").dt.hour() >= START_HOUR)
-    emissions_df = pl.read_parquet(EMISSIONS_FILE).filter(pl.col("TIME").dt.hour() >= START_HOUR)
+    
+    planes_df = pl.read_parquet(PLANES_FILE)
+    emissions_df = pl.read_parquet(EMISSIONS_FILE)
+
+    # filter after this hour
+    # but keep the next midnight
+    START_HOUR = 5
+
+    emissions_df = (
+        emissions_df
+        .filter(
+            (pl.col("TIME").dt.hour() >= START_HOUR) |
+            (pl.col("TIME") == pl.col("TIME").last())
+        )
+    )
+    
 
     # Sanity check: data should span exactly one local calendar day
     dates = emissions_df["TIME"].dt.date().unique()
-    assert len(dates) == 1, f"Expected data for 1 day, got {len(dates)}: {sorted(dates.to_list())}"
 
     # take 1 in every nth record, to speed up generation
-    emissions_df = emissions_df.gather_every(take_every)
+    # but always keep the last midnight row
+    emissions_df = pl.concat([
+        emissions_df.head(-1).gather_every(take_every),
+        emissions_df.tail(1)
+    ])
 
     # Filter planes to only include times that are in emissions
     planes_df = planes_df.join(emissions_df.select("TIME"), how='inner', on="TIME")
@@ -203,11 +231,9 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
     ax_map.set_yticks([])
 
     # Mark airports
-    ax_map.plot(SYDNEY_X, SYDNEY_Y, 'ro', markersize=12, label='Sydney', zorder=5,
-                markeredgecolor='white', markeredgewidth=2)
-    ax_map.plot(MELBOURNE_X, MELBOURNE_Y, 'bo', markersize=12, label='Melbourne', zorder=5,
-                markeredgecolor='white', markeredgewidth=2)
-    ax_map.legend(loc='upper left', fontsize=11, framealpha=0.9)
+    for name, apt in AIRPORTS.items():
+        ax_map.plot(apt['x'], apt['y'], 'o', markersize=10, color='red', zorder=5,
+                    markeredgecolor='white', markeredgewidth=2)
 
     # Add planes
     if len(planes_at_time) > 0:
@@ -306,14 +332,17 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
                  transform=ax_stats.transAxes)
 
 
-    # Calculate dollar damages
-    co2_damage = co2 * CO2_DAMAGE_PER_KG
-    co_damage = co * CO_DAMAGE_PER_KG
-    sox_damage = sox * SOX_DAMAGE_PER_KG
-    nox_damage = nox * NOX_DAMAGE_PER_KG
-    hc_damage = hc * HC_DAMAGE_PER_KG
-    pm_damage = pm_total * PM_DAMAGE_PER_KG
-    total_damage = co2_damage + co_damage + sox_damage + nox_damage + hc_damage + pm_damage
+    # Read pre-computed dollar damages
+    if len(emissions_at_time) > 0:
+        co2_damage = emissions_at_time['CO2_DAMAGE'][0]
+        co_damage = emissions_at_time['CO_DAMAGE'][0]
+        sox_damage = emissions_at_time['SOX_DAMAGE'][0]
+        nox_damage = emissions_at_time['NOX_DAMAGE'][0]
+        hc_damage = emissions_at_time['HC_DAMAGE'][0]
+        pm_damage = emissions_at_time['PM_DAMAGE'][0]
+        total_damage = emissions_at_time['TOTAL_DAMAGE'][0]
+    else:
+        co2_damage = co_damage = sox_damage = nox_damage = hc_damage = pm_damage = total_damage = 0.0
 
     # Table layout constants
     num_gases = 6
@@ -424,6 +453,7 @@ def create_video(frame_dir, output_path, framerate=10):
         '-framerate', str(framerate),
         '-pattern_type', 'glob',
         '-i', f'{frame_dir}/frame_*.png',
+        '-vf', 'tpad=stop_mode=clone:stop_duration=1',
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
         '-crf', '23',  # Quality (lower = better, 23 is default)
@@ -445,11 +475,33 @@ def main():
     """Main function to create the animation."""
     print("Starting animation creation...")
 
-    take_every = 4 # 20
+    take_every = 2
 
     # Load data once
     planes_df, emissions_df, times = load_data(take_every=take_every)
     flight_count_total = emissions_df.select("NUM_FLIGHTS").max().item()
+
+    # Compute damage columns
+    emissions_df = emissions_df.with_columns(
+        (pl.col("CO2") * CO2_DAMAGE_PER_KG).alias("CO2_DAMAGE"),
+        (pl.col("CO") * CO_DAMAGE_PER_KG).alias("CO_DAMAGE"),
+        (pl.col("SOX") * SOX_DAMAGE_PER_KG).alias("SOX_DAMAGE"),
+        (pl.col("NOX") * NOX_DAMAGE_PER_KG).alias("NOX_DAMAGE"),
+        (pl.col("HC") * HC_DAMAGE_PER_KG).alias("HC_DAMAGE"),
+        (pl.col("PM_TOTAL") * PM_DAMAGE_PER_KG).alias("PM_DAMAGE"),
+    ).with_columns(
+        pl.sum_horizontal(pl.col("^.*_DAMAGE$")).alias("TOTAL_DAMAGE"),
+    )
+
+    # Save final totals as JSON
+    last_row = emissions_df.sort("TIME").row(-1, named=True)
+    numbers = {k: v for k, v in last_row.items() if k != "TIME"}
+    numbers["TIME"] = str(last_row["TIME"])
+    NUMBERS_FILE = RESULTS_DIR / "numbers.json"
+    with open(NUMBERS_FILE, "w") as f:
+        json.dump(numbers, f, indent=2)
+    print(f"Saved final totals to {NUMBERS_FILE}")
+
     plane_img = load_and_prepare_plane_image()
 
     if os.path.exists(FRAME_DIR):

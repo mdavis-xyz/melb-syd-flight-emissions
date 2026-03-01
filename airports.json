@@ -1,0 +1,42 @@
+{
+    "Melbourne": {
+        "wikipedia": "https://en.wikipedia.org/wiki/Melbourne_Airport",
+        "IATA": "MEL",
+        "ICAO": "YMML",
+        "WMO": 94866,
+        "location": {
+            "latitude": -37.673333, 
+            "longitude": 144.843333
+        }
+    },
+    "Avalon": {
+        "wikipedia": "https://en.wikipedia.org/wiki/Avalon_Airport",
+        "IATA": "AVV",
+        "ICAO": "YMAV",
+        "WMO": 94854,
+        "location": {
+            "latitude": -38.040556,
+            "longitude": 144.470833
+        }
+    },
+    "Sydney": {
+        "wikipedia": "https://en.wikipedia.org/wiki/Sydney_Airport",
+        "IATA": "SYD",
+        "ICAO": "YSSY",
+        "WMO": 94767,
+        "location": {
+            "latitude": -33.946111, 
+            "longitude": 151.177222
+        }
+    },
+    "Canberra": {
+        "wikipedia": "https://en.wikipedia.org/wiki/Canberra_Airport",
+        "IATA": "CBR",
+        "ICAO": "YSCB",
+        "WMO": 94926,
+        "location": {
+            "latitude": -35.306944,
+            "longitude": 149.195
+        }
+    }
+}

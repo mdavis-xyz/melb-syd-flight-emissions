@@ -70,6 +70,14 @@ The way emissions data works is that there is one number for take off, taxiing, 
 
 I wrote the data part (`01-get-data.ipynb`) myself. The animation was written by an LLM.
 
+## List of Airports
+
+If you want to do the same analysis for airports in another region:
+
+1. Change `airport_info` in `01-get-data.ipynb`, and perhaps other fields such as timezone, to get the data. This is also where the date is chosen.
+2. Change `MELBOURNE_Y`, `SYDNEY_X` etc in `02-create-animation.py` to pan the map.
+
+
 ## Marginal Damage Costs
 
 What price do we put on carbon and other gases?
@@ -106,8 +114,15 @@ https://www.nepc.gov.au/sites/default/files/2022-09/aaq-nepm-impact-statement-ap
 They don't say the numbers, but say they use the UK's numbers:
 https://www.gov.uk/government/publications/assess-the-impact-of-air-quality/air-quality-appraisal-damage-cost-guidance
 
+For NOX and PM2.5, we use aircraft specific figures.
+
 In 2025 prices, pounds.
 
+### Why is NOX damage so big?
+
+I was surprised that it's so big. 3x bigger than C02 damage when using the AER carbon price.
+Here's a paper showing that this is indeed right:
+https://www.sciencedaily.com/releases/2019/11/191107202553.htm
 
 ### Hydrocarbons - HC
 
