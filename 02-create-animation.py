@@ -273,8 +273,9 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
 
     num_passengers = round(PASSENGERS_DAILY * num_flights / flight_count_total)
 
-    # Format time
+    # Format time and date
     time_str = time_val.strftime('%H:%M')
+    date_str = time_val.strftime('%a %-d %b %Y')
 
     # Draw analog clock
     clock_center_x = 0.25
@@ -314,10 +315,14 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
                              transform=ax_stats.transAxes, facecolor='black', zorder=3)
     ax_stats.add_patch(center_dot)
 
-    # Display time text (moved right)
+    # Display date and time text, right-aligned to the same right edge
+    y_pos = 0.87
+    ax_stats.text(0.85, y_pos, date_str,
+                 ha='right', va='bottom', fontsize=14,
+                 family='monospace', transform=ax_stats.transAxes)
     y_pos = 0.85
-    ax_stats.text(0.6, y_pos, time_str,
-                 ha='center', va='top', fontsize=48, fontweight='bold',
+    ax_stats.text(0.85, y_pos, time_str,
+                 ha='right', va='top', fontsize=48, fontweight='bold',
                  family='monospace', transform=ax_stats.transAxes)
 
     # Flight count
