@@ -112,6 +112,7 @@ OUTPUT_VIDEO = RESULTS_DIR / "animation.mp4"
 OUTPUT_MAP_JPG = RESULTS_DIR / "map.jpg"
 DAMAGE_RATES_FILE = RESULTS_DIR / "damage_rates.json"
 DAMAGE_RATES_MD_FILE = RESULTS_DIR / "damage_rates.md"
+NUMBERS_MD_FILE = RESULTS_DIR / "numbers.md"
 FRAME_DIR = RESULTS_DIR / "frames"
 
 # Coordinate transformer: lat/lon (EPSG:4326) to Web Mercator (EPSG:3857)
@@ -240,6 +241,9 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
 
     # Left subplot: Map
     ax_map = fig.add_subplot(1, 2, 1)
+    # Shift map right by clock_radius (0.08) to add left margin
+    _pos = ax_map.get_position()
+    ax_map.set_position([_pos.x0 + 0.08, _pos.y0, _pos.width - 0.08, _pos.height])
     ax_map.set_xlim(X_MIN, X_MAX)
     ax_map.set_ylim(Y_MIN, Y_MAX)
     ax_map.set_xlabel('', fontsize=12)
@@ -469,7 +473,7 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
                  clip_on=False)
 
     # Save frame
-    plt.tight_layout()
+    plt.tight_layout(rect=[0.03, 0, 1, 1])
     # Don't use bbox_inches='tight' to maintain exact dimensions (16*120=1920, 9*120=1080)
     plt.savefig(frame_path, dpi=120)
     plt.close(fig)
@@ -501,7 +505,7 @@ def export_map_jpg(planes_at_time, plane_img, output_path):
                 ax.add_artist(ab)
 
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-    plt.savefig(output_path, dpi=150, format='jpeg')
+    plt.savefig(output_path, dpi=75, format='jpeg')
     plt.close(fig)
     print(f"Map image saved to: {output_path}")
 
@@ -539,7 +543,7 @@ def main():
     """Main function to create the animation."""
     print("Starting animation creation...")
 
-    take_every = 2
+    take_every = 4
 
     # Load data once
     planes_df, emissions_df, times = load_data(take_every=take_every)
@@ -574,12 +578,12 @@ def main():
     md = (
         "| Pollutant | Damage Cost |\n"
         "|---|---|\n"
-        f"| Carbon Dioxide (CO2) | {CO2_DAMAGE_PER_TONNE:.2f}, AUD/tonne |\n"
-        f"| Carbon Monoxide (CO) | {CO_DAMAGE_PER_KG:.4f}, AUD/kg |\n"
-        f"| Nitrogen Oxides (NOx) | {NOX_DAMAGE_PER_KG:.2f}, AUD/kg |\n"
-        f"| Sulfur Oxides (SOx) | {SOX_DAMAGE_PER_KG:.2f}, AUD/kg |\n"
-        f"| Particulate Matter (PM) | {PM_DAMAGE_PER_KG:.2f}, AUD/kg |\n"
-        f"| Hydrocarbons (HC) | {HC_DAMAGE_PER_KG:.4f}, AUD/kg |\n"
+        f"| Carbon Dioxide (CO2) | {CO2_DAMAGE_PER_TONNE:.2f} AUD/tonne |\n"
+        f"| Carbon Monoxide (CO) | {CO_DAMAGE_PER_KG:.4f} AUD/kg |\n"
+        f"| Nitrogen Oxides (NOx) | {NOX_DAMAGE_PER_KG:.2f} AUD/kg |\n"
+        f"| Sulfur Oxides (SOx) | {SOX_DAMAGE_PER_KG:.2f} AUD/kg |\n"
+        f"| Particulate Matter (PM) | {PM_DAMAGE_PER_KG:.2f} AUD/kg |\n"
+        f"| Hydrocarbons (HC) | {HC_DAMAGE_PER_KG:.4f} AUD/kg |\n"
     )
     with open(DAMAGE_RATES_MD_FILE, "w") as f:
         f.write(md)
@@ -593,6 +597,44 @@ def main():
     with open(NUMBERS_FILE, "w") as f:
         json.dump(numbers, f, indent=2)
     print(f"Saved final totals to {NUMBERS_FILE}")
+
+    # Save final totals as a markdown table
+    def fmt_qty(kg):
+        """Format a mass in kg with appropriate units."""
+        if kg >= 1000:
+            t = kg / KG_PER_TONNE
+            if t >= 100:
+                return f"{t:,.0f} tonnes"
+            else:
+                return f"{t:,.1f} tonnes"
+        else:
+            return f"{kg:,.0f} kg"
+
+    def fmt_cost(aud):
+        special_space = "\u00a0" # Pandoc will leave this as one char wide
+        return f"${aud:>12,.0f}".replace(" ", special_space)
+
+    gases = [
+        ("CO₂",  last_row["CO2"],      last_row["CO2_DAMAGE"]),
+        ("CO",   last_row["CO"],       last_row["CO_DAMAGE"]),
+        ("SOₓ",  last_row["SOX"],      last_row["SOX_DAMAGE"]),
+        ("NOₓ",  last_row["NOX"],      last_row["NOX_DAMAGE"]),
+        ("HC",   last_row["HC"],       last_row["HC_DAMAGE"]),
+        ("PM",   last_row["PM_TOTAL"], last_row["PM_DAMAGE"]),
+    ]
+    total_cost = last_row["TOTAL_DAMAGE"]
+
+    md_lines = [
+        "| Gas | Quantity | Cost (AUD) |",
+        "|-----|----------|-----------|",
+    ]
+    for name, qty_kg, cost in gases:
+        md_lines.append(f"| {name} | {fmt_qty(qty_kg)} | {fmt_cost(cost)} |")
+    md_lines.append(f"| **Total** | | **{fmt_cost(total_cost)}** |")
+
+    with open(NUMBERS_MD_FILE, "w") as f:
+        f.write("\n".join(md_lines) + "\n")
+    print(f"Saved final totals table to {NUMBERS_MD_FILE}")
 
     plane_img = load_and_prepare_plane_image()
 
