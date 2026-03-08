@@ -22,7 +22,8 @@ import numpy as np
 import contextily as cx
 from pyproj import Transformer
 
-AUD_PER_POUND = 1.928246 # as of date of writing, 13/2/2026
+AUD_PER_POUND = 1.90707364 # as of date of writing, 13/2/2026
+AUD_PER_USD = 1.42804505 # as of 8/3/2026 https://www.xe.com/en-us/currencyconverter/convert/?Amount=1&From=USD&To=AUD
 KG_PER_TONNE = 1000
 DAYS_PER_YEAR = 365
 
@@ -34,8 +35,29 @@ DAYS_PER_YEAR = 365
 # AER guidance
 # Table A.1, page 19
 #https://www.aemc.gov.au/sites/default/files/2024-03/AEMC%20guide%20on%20how%20energy%20objectives%20shape%20our%20decisions%20clean%20200324.pdf
-CO2_DAMAGE_PER_TONNE = 80 # AUD 2026 / tonne CO2e
+# CO2_DAMAGE_PER_TONNE = 80 # AUD 2026 / tonne CO2e
+# CO2_DAMAGE_PER_KG = CO2_DAMAGE_PER_TONNE / KG_PER_TONNE
+
+# Rennert et al. 2022, Nature 
+# Using their 1,5% discount rate
+# https://www.nature.com/articles/s41586-022-05224-9
+CO2_DAMAGE_USD_PER_TONNE_2020 = 308
+RENNERT_DISCOUNT = 0.015
+RENNERT_YEARS_AGO = 2026 - 2020
+# ABS: 
+# https://www.abs.gov.au/statistics/economy/price-indexes-and-inflation/consumer-price-index-australia/dec-2025#data-downloads
+# Table 17, column J, series A2325846C
+RENNERT_INFLATION = (100.32/81.0)
+# increase by inflation, to get nominal value
+# increase by real discount rate, based on Hotelling rule
+# No this is not double-counting. One is nominal indexation, one is real indexation.
+CO2_DAMAGE_USD_PER_TONNE_2026 = CO2_DAMAGE_USD_PER_TONNE_2020 * RENNERT_INFLATION * (1 + RENNERT_DISCOUNT)**RENNERT_YEARS_AGO
+# Arguably we should use the 2020 exchange rate, since we're adjusting by Australian inflation
+# But that's not a big difference.
+CO2_DAMAGE_AUD_PER_TONNE = CO2_DAMAGE_USD_PER_TONNE_2026 * AUD_PER_USD
+CO2_DAMAGE_PER_TONNE = CO2_DAMAGE_AUD_PER_TONNE
 CO2_DAMAGE_PER_KG = CO2_DAMAGE_PER_TONNE / KG_PER_TONNE
+
 
 # IPCC AR4: CO indirect GWP100 = 1.9 (depletes OH → extends methane lifetime, enhances ozone)
 # https://archive.ipcc.ch/publications_and_data/ar4/wg1/en/ch2s2-10-3-2.html
@@ -77,11 +99,6 @@ HC_DAMAGE_PER_KG_LOCAL = HC_DAMAGE_PER_TONNE_LOCAL / KG_PER_TONNE
 HC_GWP100 = 10.5 # kg CO2e per kg HC
 HC_DAMAGE_PER_KG = HC_DAMAGE_PER_KG_LOCAL + HC_GWP100 * CO2_DAMAGE_PER_KG
 
-# https://www.bitre.gov.au/sites/default/files/documents/domestic-aviation-activity-2024.pdf
-# 2024, before Sydney's second airport openned
-PASSENGERS_YEARLY = 8.04e6 
-PASSENGERS_DAILY = PASSENGERS_YEARLY / DAYS_PER_YEAR
-
 # =============================================================================
 
 # Paths
@@ -92,6 +109,9 @@ EMISSIONS_FILE = RESULTS_DIR / "emissions.parquet"
 PLANE_IMAGE = Path("plane-4.png")
 PLANE_ANGLE = -45
 OUTPUT_VIDEO = RESULTS_DIR / "animation.mp4"
+OUTPUT_MAP_JPG = RESULTS_DIR / "map.jpg"
+DAMAGE_RATES_FILE = RESULTS_DIR / "damage_rates.json"
+DAMAGE_RATES_MD_FILE = RESULTS_DIR / "damage_rates.md"
 FRAME_DIR = RESULTS_DIR / "frames"
 
 # Coordinate transformer: lat/lon (EPSG:4326) to Web Mercator (EPSG:3857)
@@ -122,6 +142,13 @@ LON_MAX = max(bound_lons) + LON_PAD
 # Convert bounds to Web Mercator
 X_MIN, Y_MIN = transformer.transform(LON_MIN, LAT_MIN)
 X_MAX, Y_MAX = transformer.transform(LON_MAX, LAT_MAX)
+
+# Expanded X bounds for a 3:2 aspect ratio map-only export
+_map_y_extent = Y_MAX - Y_MIN
+_map_x_extent = X_MAX - X_MIN
+_extra_x = (1.5 * _map_y_extent - _map_x_extent) / 2
+MAP_X_MIN = X_MIN - max(_extra_x, 0)
+MAP_X_MAX = X_MAX + max(_extra_x, 0)
 
 
 def load_data(take_every):
@@ -242,8 +269,9 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
             lon = row['LONGITUDE']
             angle = row['ANGLE']
             in_air = row['IN_AIR']
+            taxiing = row['TAXIING_DEPARTURE'] or row['TAXIING_ARRIVAL']
 
-            if in_air:
+            if in_air: #  or taxiing
                 # Convert lat/lon to Web Mercator
                 x, y = transformer.transform(lon, lat)
 
@@ -271,7 +299,7 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
     else:
         num_flights = co2 = nox = sox = co = hc = pm_total = 0.0
 
-    num_passengers = round(PASSENGERS_DAILY * num_flights / flight_count_total)
+    num_passengers = emissions_at_time["PASSENGERS_ARRIVED"][0]
 
     # Format time and date
     time_str = time_val.strftime('%H:%M')
@@ -447,6 +475,37 @@ def create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total
     plt.close(fig)
 
 
+def export_map_jpg(planes_at_time, plane_img, output_path):
+    """Export map with planes (no table, clock, or title) as a 3:2 JPEG."""
+    fig, ax = plt.subplots(figsize=(12, 8), dpi=150)
+
+    ax.set_xlim(MAP_X_MIN, MAP_X_MAX)
+    ax.set_ylim(Y_MIN, Y_MAX)
+    ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    cx.add_basemap(ax, crs="EPSG:3857", source=cx.providers.OpenStreetMap.Mapnik, zoom=7)
+
+    for name, apt in AIRPORTS.items():
+        ax.plot(apt['x'], apt['y'], 'o', markersize=10, color='red', zorder=5,
+                markeredgecolor='white', markeredgewidth=2)
+
+    if len(planes_at_time) > 0:
+        for row in planes_at_time.iter_rows(named=True):
+            if row['IN_AIR']:
+                x, y = transformer.transform(row['LONGITUDE'], row['LATITUDE'])
+                rotated_plane = rotate_plane_image(plane_img, row['ANGLE'])
+                imagebox = OffsetImage(rotated_plane, zoom=0.05)
+                ab = AnnotationBbox(imagebox, (x, y), frameon=False, pad=0, zorder=10)
+                ax.add_artist(ab)
+
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    plt.savefig(output_path, dpi=150, format='jpeg')
+    plt.close(fig)
+    print(f"Map image saved to: {output_path}")
+
+
 def create_video(frame_dir, output_path, framerate=10):
     """Use ffmpeg to create video from frames."""
     print(f"\nCreating video with ffmpeg...")
@@ -498,6 +557,34 @@ def main():
         pl.sum_horizontal(pl.col("^.*_DAMAGE$")).alias("TOTAL_DAMAGE"),
     )
 
+    # Save damage rates (AUD/kg) as JSON
+    damage_rates = {
+        "CO2": CO2_DAMAGE_PER_KG,
+        "CO": CO_DAMAGE_PER_KG,
+        "NOX": NOX_DAMAGE_PER_KG,
+        "SOX": SOX_DAMAGE_PER_KG,
+        "PM": PM_DAMAGE_PER_KG,
+        "HC": HC_DAMAGE_PER_KG,
+    }
+    with open(DAMAGE_RATES_FILE, "w") as f:
+        json.dump(damage_rates, f, indent=2)
+    print(f"Saved damage rates to {DAMAGE_RATES_FILE}")
+
+    # Save damage rates as a markdown table
+    md = (
+        "| Pollutant | Damage Cost |\n"
+        "|---|---|\n"
+        f"| Carbon Dioxide (CO2) | {CO2_DAMAGE_PER_TONNE:.2f}, AUD/tonne |\n"
+        f"| Carbon Monoxide (CO) | {CO_DAMAGE_PER_KG:.4f}, AUD/kg |\n"
+        f"| Nitrogen Oxides (NOx) | {NOX_DAMAGE_PER_KG:.2f}, AUD/kg |\n"
+        f"| Sulfur Oxides (SOx) | {SOX_DAMAGE_PER_KG:.2f}, AUD/kg |\n"
+        f"| Particulate Matter (PM) | {PM_DAMAGE_PER_KG:.2f}, AUD/kg |\n"
+        f"| Hydrocarbons (HC) | {HC_DAMAGE_PER_KG:.4f}, AUD/kg |\n"
+    )
+    with open(DAMAGE_RATES_MD_FILE, "w") as f:
+        f.write(md)
+    print(f"Saved damage rates table to {DAMAGE_RATES_MD_FILE}")
+
     # Save final totals as JSON
     last_row = emissions_df.sort("TIME").row(-1, named=True)
     numbers = {k: v for k, v in last_row.items() if k != "TIME"}
@@ -524,6 +611,17 @@ def main():
         create_frame(time_val, planes_at_time, emissions_at_time, flight_count_total, plane_img, frame_path)
 
     print(f"\nGenerated {len(times)} frames")
+
+    # Export map JPG at the busiest moment (most planes in air)
+    plane_counts = (
+        planes_df
+        .filter(pl.col("IN_AIR"))
+        .group_by("TIME")
+        .agg(pl.len().alias("count"))
+    )
+    peak_time = plane_counts.sort("count", descending=True)["TIME"][0]
+    planes_at_peak = planes_df.filter(pl.col("TIME") == peak_time)
+    export_map_jpg(planes_at_peak, plane_img, OUTPUT_MAP_JPG)
 
     # Create video
     video_duration = 20  # seconds
